@@ -317,48 +317,50 @@ with st.sidebar:
     store = st.selectbox(
         "Store",
         [
-            "Store A",
-            "Store B",
-            "Store C",
-            "Store D"
+            "S001",
+            "S002",
+            "S003",
+            "S004",
+            "S005"
         ]
     )
 
     category = st.selectbox(
         "Category",
         [
-            "Beverages",
-            "Food",
-            "Household",
-            "Personal Care"
+            "Groceries",
+            "Toys",
+            "Electronics",
+            "Furniture",
+            "Clothing"
         ]
     )
 
     region = st.selectbox(
         "Region",
         [
-            "Central",
-            "Northern",
-            "Southern",
-            "Eastern"
+            "North",
+            "West",
+            "South",
+            "East"
         ]
     )
 
     month = st.selectbox(
         "Month",
         [
-            "January",
-            "February",
-            "March",
-            "April",
-            "May",
-            "June",
-            "July",
-            "August",
-            "September",
-            "October",
-            "November",
-            "December"
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12"
         ]
     )
 
@@ -371,8 +373,8 @@ with st.sidebar:
     holiday = st.selectbox(
         "Holiday / Promotion",
         [
-            "No",
-            "Yes"
+            "False",
+            "True"
         ]
     )
 
@@ -388,9 +390,10 @@ with st.sidebar:
     seasonality = st.selectbox(
         "Seasonality",
         [
-            "Low",
-            "Normal",
-            "High"
+            "Spring",
+            "Summer",
+            "Autumn",
+            "Winter"
         ]
     )
 
@@ -938,6 +941,7 @@ if st.session_state.forecast_generated:
             </div>
 
         </div>
+        <br>
         """,
         unsafe_allow_html=True
     )
