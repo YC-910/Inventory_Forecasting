@@ -229,6 +229,7 @@ st.markdown(
         padding: 30px 0px 10px 0px;
     }
 
+
     /* --------------------------------------------------------
     SIDEBAR COLLAPSE / EXPAND BUTTON
     -------------------------------------------------------- */
@@ -240,17 +241,44 @@ st.markdown(
         border-radius: 8px !important;
         width: 38px !important;
         height: 38px !important;
+        opacity: 1 !important;
+        visibility: visible !important;
         box-shadow: 0px 3px 10px rgba(0, 0, 0, 0.25) !important;
     }
 
-    [data-testid="stSidebarCollapseButton"] button:hover {
-        background-color: #1d4ed8 !important;
+    /* Keep the button visible even without hover */
+    [data-testid="stSidebarCollapseButton"] button:hover,
+    [data-testid="stSidebarCollapseButton"] button:focus,
+    [data-testid="stSidebarCollapseButton"] button:active {
+        background-color: #2563eb !important;
         color: #ffffff !important;
+        opacity: 1 !important;
     }
 
+    /* Make the arrow itself white */
     [data-testid="stSidebarCollapseButton"] button svg {
         color: #ffffff !important;
         fill: #ffffff !important;
+        stroke: #ffffff !important;
+    }
+
+    /* --------------------------------------------------------
+   SIDEBAR - CLEAN TRANSITION
+    -------------------------------------------------------- */
+
+    [data-testid="stSidebar"] {
+        background-color: #0f172a;
+        border-right: 1px solid #1e293b;
+    }
+
+    /* Keep sidebar content stable */
+    [data-testid="stSidebarContent"] {
+        overflow-x: hidden !important;
+    }
+
+    /* Prevent content from visually jumping */
+    [data-testid="stSidebarUserContent"] {
+        overflow-x: hidden !important;
     }
     </style>
     """,
