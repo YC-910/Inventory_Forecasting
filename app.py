@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import joblib
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -15,6 +16,185 @@ st.set_page_config(
 
 
 # ============================================================
+# LOAD TRAINED MODEL
+# ============================================================
+
+@st.cache_resource
+def load_model():
+    return joblib.load("demand_model.pkl")
+
+def prepare_model_input(input_data, model_bundle, category):
+
+    data = input_data.copy()
+
+    # ============================================================
+    # 1. LOAD SAVED CATEGORY MAPPINGS
+    # ============================================================
+
+    mappings = model_bundle['category_mappings']
+
+    categorical_columns = model_bundle['categorical_columns']
+
+    # ============================================================
+    # 2. CONVERT CATEGORICAL COLUMNS TO TRAINING CODES
+    # ============================================================
+
+    for col in categorical_columns:
+
+        if col in data.columns:
+
+            if col not in mappings:
+                raise ValueError(
+                    f"No saved mapping found for '{col}'."
+                )
+
+            # Convert the user's selected value
+            # into the same integer code used during training
+            data[col] = (
+                data[col]
+                .astype(str)
+                .map(mappings[col])
+            )
+
+            # Check for unknown values
+            if data[col].isna().any():
+
+                original_value = input_data[col].iloc[0]
+
+                raise ValueError(
+                    f"Unknown value '{original_value}' "
+                    f"for column '{col}'."
+                )
+
+            data[col] = data[col].astype(int)
+
+    # ============================================================
+    # 3. CONVERT HOLIDAY/PROMOTION TO 0/1
+    # ============================================================
+
+    if 'Holiday/Promotion' in data.columns:
+
+        if data['Holiday/Promotion'].dtype == bool:
+
+            data['Holiday/Promotion'] = (
+                data['Holiday/Promotion']
+                .astype(int)
+            )
+
+        else:
+
+            data['Holiday/Promotion'] = (
+                data['Holiday/Promotion']
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .map({
+                    'true': 1,
+                    'false': 0,
+                    '1': 1,
+                    '0': 0,
+                    'yes': 1,
+                    'no': 0
+                })
+            )
+
+    # ============================================================
+    # 4. CONVERT NUMERIC COLUMNS
+    # ============================================================
+
+    numeric_columns = [
+        'Inventory Level',
+        'Units Ordered',
+        'Demand Forecast',
+        'Price',
+        'Discount',
+        'Competitor Pricing',
+        'Price_Discount',
+        'Price_Gap',
+        'Month',
+        'Holiday/Promotion'
+    ]
+
+    for col in numeric_columns:
+
+        if col in data.columns:
+
+            data[col] = pd.to_numeric(
+                data[col],
+                errors='coerce'
+            )
+
+    # ============================================================
+    # 5. FORCE EXACT SAME FEATURE ORDER AS TRAINING
+    # ============================================================
+
+    data = data[
+        model_bundle['feature_columns']
+    ].copy()
+
+    # ============================================================
+    # 6. CHECK FOR MISSING VALUES
+    # ============================================================
+
+    if data.isnull().any().any():
+
+        bad_columns = data.columns[
+            data.isnull().any()
+        ].tolist()
+
+        raise ValueError(
+            f"Invalid or missing values in: {bad_columns}"
+        )
+
+    # ============================================================
+    # 7. FINAL NUMERIC CONVERSION
+    # ============================================================
+
+    for col in data.columns:
+
+        data[col] = pd.to_numeric(
+            data[col],
+            errors='raise'
+        )
+
+    # ============================================================
+    # 8. DEBUG CHECK
+    # ============================================================
+
+    print("\n" + "=" * 70)
+    print("FINAL MODEL INPUT CHECK")
+    print("=" * 70)
+
+    print("\nColumns:")
+    print(data.columns.tolist())
+
+    print("\nData types:")
+    print(data.dtypes)
+
+    print("\nValues:")
+    print(data)
+
+    print("\nNon-numeric columns:")
+    print(
+        data.select_dtypes(
+            exclude=np.number
+        ).columns.tolist()
+    )
+
+    return data
+
+try:
+    model = load_model()
+    model_loaded = True
+    model_error = None
+
+except Exception as e:
+    model = None
+    model_loaded = False
+    model_error = str(e)
+
+
+# ============================================================
 # CUSTOM CSS
 # ============================================================
 
@@ -22,9 +202,9 @@ st.markdown(
     """
     <style>
 
-    /* --------------------------------------------------------
+    /* ========================================================
        GENERAL
-    -------------------------------------------------------- */
+    ======================================================== */
 
     .main {
         padding-top: 1rem;
@@ -39,7 +219,16 @@ st.markdown(
         border-right: 1px solid #1e293b;
     }
 
-    /* Sidebar text */
+    [data-testid="stSidebarContent"],
+    [data-testid="stSidebarUserContent"] {
+        overflow-x: hidden !important;
+    }
+
+
+    /* ========================================================
+       SIDEBAR TEXT
+    ======================================================== */
+
     [data-testid="stSidebar"] label {
         color: #e2e8f0 !important;
     }
@@ -51,119 +240,6 @@ st.markdown(
     [data-testid="stSidebar"] h3 {
         color: #ffffff !important;
     }
-
-    /* --------------------------------------------------------
-       HEADER
-    -------------------------------------------------------- */
-
-    .dashboard-header {
-        background: linear-gradient(
-            135deg,
-            #0f172a 0%,
-            #1e3a8a 100%
-        );
-
-        padding: 28px 32px;
-        border-radius: 14px;
-        margin-bottom: 25px;
-        box-shadow: 0px 4px 12px rgba(15, 23, 42, 0.15);
-    }
-
-    .dashboard-title {
-        font-size: 32px;
-        font-weight: 700;
-        color: #ffffff;
-        margin-bottom: 6px;
-    }
-
-    .dashboard-subtitle {
-        font-size: 15px;
-        color: #dbeafe;
-    }
-
-    /* --------------------------------------------------------
-       KPI CARDS
-    -------------------------------------------------------- */
-
-    .kpi-card {
-        background: #ffffff;
-        border: 1px solid #dbeafe;
-        border-left: 5px solid #2563eb;
-        border-radius: 12px;
-        padding: 20px;
-        min-height: 125px;
-        box-shadow: 0px 3px 10px rgba(15, 23, 42, 0.06);
-    }
-
-    .kpi-label {
-        font-size: 13px;
-        color: #64748b;
-        margin-bottom: 8px;
-    }
-
-    .kpi-value {
-        font-size: 28px;
-        font-weight: 700;
-        color: #1e3a8a;
-    }
-
-    .kpi-description {
-        font-size: 12px;
-        color: #94a3b8;
-        margin-top: 5px;
-    }
-
-    /* --------------------------------------------------------
-       SECTION HEADER
-    -------------------------------------------------------- */
-
-    .section-title {
-        font-size: 20px;
-        font-weight: 650;
-        color: #0f172a;
-        margin-top: 20px;
-        margin-bottom: 5px;
-        border-left: 4px solid #2563eb;
-        padding-left: 10px;
-    }
-
-    .section-description {
-        font-size: 13px;
-        color: #64748b;
-        margin-bottom: 15px;
-        padding-left: 14px;
-    }
-
-    /* --------------------------------------------------------
-       RESULT BOX
-    -------------------------------------------------------- */
-
-    .recommendation {
-        background: #ffffff;
-        border: 1px solid #bfdbfe;
-        border-left: 5px solid #2563eb;
-        border-radius: 12px;
-        padding: 20px;
-        margin-top: 10px;
-        box-shadow: 0px 3px 10px rgba(15, 23, 42, 0.05);
-    }
-
-    .recommendation-title {
-        font-size: 16px;
-        font-weight: 650;
-        color: #1e3a8a;
-        margin-bottom: 8px;
-    }
-
-    .recommendation-text {
-        font-size: 14px;
-        color: #475569;
-        line-height: 1.6;
-    }
-
-    /* --------------------------------------------------------
-       SIDEBAR
-    -------------------------------------------------------- */
 
     .sidebar-title {
         font-size: 22px;
@@ -186,9 +262,10 @@ st.markdown(
         margin-bottom: 10px;
     }
 
-    /* --------------------------------------------------------
+
+    /* ========================================================
        SIDEBAR INPUTS
-    -------------------------------------------------------- */
+    ======================================================== */
 
     [data-testid="stSidebar"] [data-baseweb="select"] {
         background-color: #1e293b;
@@ -200,53 +277,64 @@ st.markdown(
         border-radius: 8px;
     }
 
-    /* --------------------------------------------------------
-       BUTTON
-    -------------------------------------------------------- */
+
+    /* ========================================================
+       FORECAST BUTTON
+    ======================================================== */
 
     [data-testid="stSidebar"] .stButton > button {
-        background-color: #2563eb;
-        color: #ffffff;
-        border: none;
-        border-radius: 8px;
-        font-weight: 600;
-        padding: 10px;
+        background: linear-gradient(
+            135deg,
+            #2563eb,
+            #1d4ed8
+        ) !important;
+
+        color: #ffffff !important;
+        border: 1px solid #60a5fa !important;
+        border-radius: 9px !important;
+
+        font-size: 14px !important;
+        font-weight: 650 !important;
+
+        padding: 12px !important;
+
+        box-shadow:
+            0px 4px 12px rgba(37, 99, 235, 0.35) !important;
     }
 
     [data-testid="stSidebar"] .stButton > button:hover {
-        background-color: #1d4ed8;
-        color: #ffffff;
-    }
+        background: linear-gradient(
+            135deg,
+            #3b82f6,
+            #2563eb
+        ) !important;
 
-    /* --------------------------------------------------------
-       FOOTER
-    -------------------------------------------------------- */
-
-    .footer {
-        text-align: center;
-        color: #94a3b8;
-        font-size: 12px;
-        padding: 30px 0px 10px 0px;
+        border-color: #93c5fd !important;
+        color: #ffffff !important;
     }
 
 
-    /* --------------------------------------------------------
-    SIDEBAR COLLAPSE / EXPAND BUTTON
-    -------------------------------------------------------- */
+    /* ========================================================
+       SIDEBAR COLLAPSE / EXPAND BUTTON
+    ======================================================== */
 
     [data-testid="stSidebarCollapseButton"] button {
         background-color: #2563eb !important;
         color: #ffffff !important;
+
         border: 2px solid #ffffff !important;
         border-radius: 8px !important;
+
         width: 38px !important;
         height: 38px !important;
+
         opacity: 1 !important;
         visibility: visible !important;
-        box-shadow: 0px 3px 10px rgba(0, 0, 0, 0.25) !important;
+
+        box-shadow:
+            0px 3px 10px rgba(0, 0, 0, 0.25) !important;
     }
 
-    /* Keep the button visible even without hover */
     [data-testid="stSidebarCollapseButton"] button:hover,
     [data-testid="stSidebarCollapseButton"] button:focus,
     [data-testid="stSidebarCollapseButton"] button:active {
@@ -255,35 +343,265 @@ st.markdown(
         opacity: 1 !important;
     }
 
-    /* Make the arrow itself white */
     [data-testid="stSidebarCollapseButton"] button svg {
         color: #ffffff !important;
         fill: #ffffff !important;
         stroke: #ffffff !important;
     }
 
-    /* --------------------------------------------------------
-   SIDEBAR - CLEAN TRANSITION
-    -------------------------------------------------------- */
 
-    [data-testid="stSidebar"] {
-        background-color: #0f172a;
-        border-right: 1px solid #1e293b;
+    /* ========================================================
+       HEADER
+    ======================================================== */
+
+    .dashboard-header {
+        background: linear-gradient(
+            135deg,
+            #0f172a 0%,
+            #1e3a8a 100%
+        );
+
+        padding: 28px 32px;
+
+        border-radius: 14px;
+
+        margin-bottom: 25px;
+
+        box-shadow:
+            0px 4px 12px rgba(15, 23, 42, 0.15);
     }
 
-    /* Keep sidebar content stable */
-    [data-testid="stSidebarContent"] {
-        overflow-x: hidden !important;
+    .dashboard-title {
+        font-size: 32px;
+        font-weight: 700;
+        color: #ffffff;
+        margin-bottom: 6px;
     }
 
-    /* Prevent content from visually jumping */
-    [data-testid="stSidebarUserContent"] {
-        overflow-x: hidden !important;
+    .dashboard-subtitle {
+        font-size: 15px;
+        color: #dbeafe;
     }
+
+
+    /* ========================================================
+       SECTION HEADERS
+    ======================================================== */
+
+    .section-title {
+        font-size: 20px;
+        font-weight: 650;
+
+        color: #0f172a;
+
+        margin-top: 20px;
+        margin-bottom: 5px;
+
+        border-left: 4px solid #2563eb;
+
+        padding-left: 10px;
+    }
+
+    .section-description {
+        font-size: 13px;
+
+        color: #64748b;
+
+        margin-bottom: 15px;
+
+        padding-left: 14px;
+    }
+
+
+    /* ========================================================
+       SCENARIO CARDS
+    ======================================================== */
+
+    .scenario-card {
+        background: #ffffff;
+
+        border: 1px solid #dbeafe;
+
+        border-radius: 10px;
+
+        padding: 15px 18px;
+
+        min-height: 75px;
+
+        box-shadow:
+            0px 2px 8px rgba(15, 23, 42, 0.04);
+    }
+
+    .scenario-label {
+        font-size: 12px;
+        color: #64748b;
+
+        margin-bottom: 5px;
+    }
+
+    .scenario-value {
+        font-size: 17px;
+
+        font-weight: 650;
+
+        color: #1e3a8a;
+    }
+
+
+    /* ========================================================
+       SUCCESS STATUS
+    ======================================================== */
+
+    .forecast-success {
+        background: #ecfdf5;
+
+        border: 1px solid #a7f3d0;
+
+        border-left: 5px solid #10b981;
+
+        border-radius: 10px;
+
+        padding: 14px 18px;
+
+        margin-bottom: 20px;
+    }
+
+    .forecast-success-title {
+        font-size: 14px;
+
+        font-weight: 650;
+
+        color: #047857;
+    }
+
+    .forecast-success-text {
+        font-size: 12px;
+
+        color: #065f46;
+
+        margin-top: 3px;
+    }
+
+
+    /* ========================================================
+       KPI CARDS
+    ======================================================== */
+
+    .kpi-card {
+        background: #ffffff;
+
+        border: 1px solid #dbeafe;
+
+        border-left: 5px solid #2563eb;
+
+        border-radius: 12px;
+
+        padding: 20px;
+
+        min-height: 125px;
+
+        box-shadow:
+            0px 3px 10px rgba(15, 23, 42, 0.06);
+    }
+
+    .kpi-label {
+        font-size: 13px;
+
+        color: #64748b;
+
+        margin-bottom: 8px;
+    }
+
+    .kpi-value {
+        font-size: 28px;
+
+        font-weight: 700;
+
+        color: #1e3a8a;
+    }
+
+    .kpi-description {
+        font-size: 12px;
+
+        color: #94a3b8;
+
+        margin-top: 5px;
+    }
+
+
+    /* ========================================================
+       RECOMMENDATION
+    ======================================================== */
+
+    .recommendation {
+        background: #ffffff;
+
+        border: 1px solid #bfdbfe;
+
+        border-left: 5px solid #2563eb;
+
+        border-radius: 12px;
+
+        padding: 20px;
+
+        margin-top: 10px;
+
+        box-shadow:
+            0px 3px 10px rgba(15, 23, 42, 0.05);
+    }
+
+    .recommendation-title {
+        font-size: 16px;
+
+        font-weight: 650;
+
+        color: #1e3a8a;
+
+        margin-bottom: 8px;
+    }
+
+    .recommendation-text {
+        font-size: 14px;
+
+        color: #475569;
+
+        line-height: 1.6;
+    }
+
+
+    /* ========================================================
+       FOOTER
+    ======================================================== */
+
+    .footer {
+        text-align: center;
+
+        color: #94a3b8;
+
+        font-size: 12px;
+
+        padding: 30px 0px 10px 0px;
+    }
+
     </style>
     """,
     unsafe_allow_html=True
 )
+
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
+if "forecast_generated" not in st.session_state:
+    st.session_state.forecast_generated = False
+
+if "predicted_demand" not in st.session_state:
+    st.session_state.predicted_demand = None
+
+if "input_data" not in st.session_state:
+    st.session_state.input_data = None
+
 
 # ============================================================
 # SIDEBAR
@@ -308,9 +626,10 @@ with st.sidebar:
 
     st.divider()
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # PRODUCT INFORMATION
-    # --------------------------------------------------------
+    # ========================================================
 
     st.markdown("### Product & Market")
 
@@ -364,9 +683,10 @@ with st.sidebar:
         ]
     )
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # MARKET CONDITIONS
-    # --------------------------------------------------------
+    # ========================================================
 
     st.markdown("### Market Conditions")
 
@@ -397,12 +717,13 @@ with st.sidebar:
         ]
     )
 
-    # ============================================================
-    # PRICING INPUTS
-    # ============================================================
+
+    # ========================================================
+    # PRICING & INVENTORY INFORMATION
+    # ========================================================
 
     st.markdown(
-        '<div class="sidebar-section">Pricing Information</div>',
+        '<div class="sidebar-section">Pricing & Inventory Information</div>',
         unsafe_allow_html=True
     )
 
@@ -410,7 +731,7 @@ with st.sidebar:
         "Competitor Price (RM)",
         min_value=0.0,
         max_value=1000.0,
-        value=8.0,
+        value=8.00,
         step=0.10,
         format="%.2f"
     )
@@ -428,42 +749,62 @@ with st.sidebar:
         "Selling Price (RM)",
         min_value=0.0,
         max_value=1000.0,
-        value=8.0,
+        value=8.00,
         step=0.10,
         format="%.2f"
     )
 
-    # --------------------------------------------------------
-    # INVENTORY PARAMETERS
-    # --------------------------------------------------------
-
-    st.markdown("### Inventory Parameters")
-
-    lead_time = st.number_input(
-        "Lead Time (days)",
-        min_value=1,
-        max_value=30,
-        value=3,
-        step=1
+    # =======================================================
+    # OTHERS
+    # =======================================================
+    inventory_level = st.number_input(
+    "Inventory Level",
+    min_value=0.0,
+    max_value=100000.0,
+    value=100.0,
+    step=1.0
     )
 
-    safety_stock = st.number_input(
-        "Safety Stock (units)",
-        min_value=0,
-        max_value=10000,
-        value=50,
-        step=10
+    units_ordered = st.number_input(
+        "Units Ordered",
+        min_value=0.0,
+        max_value=100000.0,
+        value=100.0,
+        step=1.0
     )
 
-    current_inventory = st.number_input(
-        "Current Inventory (units)",
-        min_value=0,
-        max_value=100000,
-        value=1000,
-        step=50
+    demand_forecast = st.number_input(
+        "Demand Forecast",
+        min_value=0.0,
+        max_value=100000.0,
+        value=100.0,
+        step=1.0
+    )
+
+    price_discount = st.number_input(
+        "Price_Discount",
+        min_value=-100000.0,
+        max_value=100000.0,
+        value=0.0,
+        step=0.10,
+        format="%.2f"
+    )
+
+    price_gap = st.number_input(
+        "Price_Gap",
+        min_value=-100000.0,
+        max_value=100000.0,
+        value=0.0,
+        step=0.10,
+        format="%.2f"
     )
 
     st.divider()
+
+
+    # ========================================================
+    # RUN FORECAST BUTTON
+    # ========================================================
 
     run_forecast = st.button(
         "🔮 Run Demand Forecast",
@@ -476,57 +817,67 @@ with st.sidebar:
 # HEADER
 # ============================================================
 
-st.markdown(
-    """
-    <div class="dashboard-header">
-        <div class="dashboard-title">
-            Demand Forecasting & Inventory Decision System
-        </div>
-        <div class="dashboard-subtitle">
-            Predict demand, evaluate uncertainty, and determine
-            the recommended reorder point.
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True
+st.title("Demand Forecasting & Inventory Decision System")
+
+st.caption(
+    "Predict demand, evaluate uncertainty, and determine "
+    "the recommended reorder point."
 )
 
 
 # ============================================================
-# CURRENT SELECTION SUMMARY
+# MODEL STATUS
 # ============================================================
 
-st.markdown(
-    '<div class="section-title">Current Scenario</div>',
-    unsafe_allow_html=True
-)
+if not model_loaded:
 
-st.markdown(
-    '<div class="section-description">Selected product and market conditions</div>',
-    unsafe_allow_html=True
+    st.error(
+        "⚠️ The demand model could not be loaded."
+    )
+
+    st.code(
+        model_error,
+        language="text"
+    )
+
+    st.stop()
+
+
+# ============================================================
+# CURRENT SCENARIO
+# ============================================================
+
+st.subheader("Current Scenario")
+
+st.caption(
+    "Selected product and market conditions"
 )
 
 scenario_col1, scenario_col2, scenario_col3, scenario_col4 = st.columns(4)
 
 with scenario_col1:
-    st.info(f"**Store**\n\n{store}")
+    st.metric(
+        label="Store",
+        value=store
+    )
 
 with scenario_col2:
-    st.info(f"**Category**\n\n{category}")
+    st.metric(
+        label="Category",
+        value=category
+    )
 
 with scenario_col3:
-    st.info(f"**Region**\n\n{region}")
+    st.metric(
+        label="Region",
+        value=region
+    )
 
 with scenario_col4:
-    st.info(f"**Month**\n\n{month}")
-
-
-# ============================================================
-# DEFAULT STATE
-# ============================================================
-
-if "forecast_generated" not in st.session_state:
-    st.session_state.forecast_generated = False
+    st.metric(
+        label="Month",
+        value=month
+    )
 
 
 # ============================================================
@@ -535,8 +886,167 @@ if "forecast_generated" not in st.session_state:
 
 if run_forecast:
 
-    st.session_state.forecast_generated = True
+    try:
 
+        # ----------------------------------------------------
+        # CREATE MODEL INPUT
+        # ----------------------------------------------------
+
+        input_data = pd.DataFrame({
+            "Store ID": [store],
+            "Region": [region],
+            "Inventory Level": [inventory_level],
+            "Units Ordered": [units_ordered],
+            "Demand Forecast": [demand_forecast],
+            "Price": [price],
+            "Discount": [discount],
+            "Weather Condition": [weather],
+            "Holiday/Promotion": [holiday],
+            "Competitor Pricing": [competitor_price],
+            "Seasonality": [seasonality],
+            "Price_Discount": [price_discount],
+            "Price_Gap": [price_gap],
+            "Month": [int(month)],
+        })
+
+
+        # ----------------------------------------------------
+        # SELECT MODEL BASED ON CATEGORY
+        # ----------------------------------------------------
+
+        if category == "Furniture":
+
+            selected_model = model["xgb_models"][category]
+
+            selected_model_name = "XGBoost"
+
+        else:
+
+            selected_model = model["lgbm_models"][category]
+
+            selected_model_name = "LightGBM"
+
+        # ============================================================
+        # PREPARE INPUT FOR MODEL
+        # ============================================================
+
+        model_input = prepare_model_input(
+            input_data,
+            model,
+            category
+        )
+
+
+        # ============================================================
+        # DEBUG MODEL INPUT
+        # ============================================================
+
+        print("\n" + "=" * 70)
+        print("FINAL MODEL INPUT CHECK")
+        print("=" * 70)
+
+        print("\nColumns:")
+        print(model_input.columns.tolist())
+
+        print("\nData types:")
+        print(model_input.dtypes)
+
+        print("\nValues:")
+        print(model_input)
+
+        print("\nNon-numeric columns:")
+        print(
+            model_input.select_dtypes(
+                exclude=np.number
+            ).columns.tolist()
+        )
+
+        # ============================================================
+        # PREDICT DEMAND
+        # ============================================================
+
+        prediction = selected_model.predict(
+            model_input
+        )
+
+        predicted_demand = float(
+            prediction[0]
+        )
+
+        predicted_demand = max(
+            0,
+            predicted_demand
+        )
+
+        # ============================================================
+        # CALCULATE UNIT LEFT MANUALLY
+        # ============================================================
+
+        calculated_unit_left = (
+            inventory_level
+            - predicted_demand
+            + units_ordered
+        )
+
+        calculated_unit_left = max(
+            0,
+            calculated_unit_left
+        )
+
+        # ----------------------------------------------------
+        # SAVE RESULTS
+        # ----------------------------------------------------
+
+        st.session_state.forecast_generated = True
+
+        st.session_state.predicted_demand = (
+            predicted_demand
+        )
+
+        st.session_state.calculated_unit_left = (
+            calculated_unit_left
+        )
+
+        st.session_state.input_data = (
+            input_data
+        )
+
+        st.session_state.selected_model_name = (
+            selected_model_name
+        )
+
+
+    except Exception as e:
+
+        st.session_state.forecast_generated = False
+
+        st.session_state.predicted_demand = None
+
+        st.error(
+            "❌ Unable to generate the demand forecast."
+        )
+
+        st.markdown(
+            "### Model Error"
+        )
+
+        st.exception(e)
+
+        st.markdown(
+            "### Model Input Used"
+        )
+
+        try:
+
+            st.dataframe(
+                input_data,
+                use_container_width=True,
+                hide_index=True
+            )
+
+        except:
+
+            pass
 
 # ============================================================
 # RESULTS
@@ -544,184 +1054,103 @@ if run_forecast:
 
 if st.session_state.forecast_generated:
 
-    # --------------------------------------------------------
-    # MODEL INPUT
-    # --------------------------------------------------------
+    predicted_demand = (
+        st.session_state.predicted_demand
+    )
 
-    input_data = pd.DataFrame({
-        "Store": [store],
-        "Category": [category],
-        "Month": [month],
-        "Holiday_Promotion": [holiday],
-        "Region": [region],
-        "Weather_Condition": [weather],
-        "Seasonality": [seasonality],
-        "Competitor_Price": [competitor_price],
-        "Discount_Percentage": [discount],
-        "Price": [price]
-    })
-
-    # --------------------------------------------------------
-    # TEMPORARY ML PREDICTION
-    # --------------------------------------------------------
-    #
-    # Replace this value with:
-    #
-    # predicted_demand = model.predict(input_data)[0]
-    #
-    # when your actual trained model is connected.
-    #
-
-    predicted_demand = 245
-
-    predicted_demand = max(0, predicted_demand)
+    input_data = (
+        st.session_state.input_data
+    )
 
 
-    # --------------------------------------------------------
+    # ========================================================
+    # SUCCESS MESSAGE
+    # ========================================================
+
+    st.success(
+    "✓ Forecast Generated Successfully\n\n"
+    "The trained demand model has generated a forecast "
+    "based on the selected product, market and pricing conditions."
+    )
+
+
+    # ========================================================
     # TEMPORARY QUANTILE FORECAST
-    # --------------------------------------------------------
+    # ========================================================
+    #
+    # IMPORTANT:
+    # These are temporary approximations for the UI.
+    #
+    # The final research methodology should generate
+    # Q10, Q25, Q50, Q75 and Q90 using actual quantile
+    # forecasting models.
+    #
+    # ========================================================
 
     q10 = predicted_demand * 0.80
+
     q25 = predicted_demand * 0.90
+
     q50 = predicted_demand
+
     q75 = predicted_demand * 1.10
+
     q90 = predicted_demand * 1.25
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # INVENTORY CALCULATION
-    # --------------------------------------------------------
+    # ========================================================
 
-    daily_demand = q50
-
-    lead_time_demand = daily_demand * lead_time
-
-    reorder_point = lead_time_demand + safety_stock
 
 
     # ========================================================
-    # KPI SECTION
+    # FORECAST OVERVIEW
     # ========================================================
 
-    st.markdown(
-        '<div class="section-title">Forecast Overview</div>',
-        unsafe_allow_html=True
-    )
+    st.subheader("Forecast Overview")
+    st.caption("Key demand and inventory indicators")
 
-    st.markdown(
-        '<div class="section-description">'
-        'Key demand and inventory indicators'
-        '</div>',
-        unsafe_allow_html=True
-    )
 
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
+    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 
     with kpi1:
-
-        st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">
-                    Predicted Demand
-                </div>
-
-                <div class="kpi-value">
-                    {predicted_demand:.0f}
-                </div>
-
-                <div class="kpi-description">
-                    units
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
+        st.metric(
+            "Predicted Demand",
+            f"{predicted_demand:.0f}"
         )
-
 
     with kpi2:
-
-        st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">
-                    Median Forecast
-                </div>
-
-                <div class="kpi-value">
-                    {q50:.0f}
-                </div>
-
-                <div class="kpi-description">
-                    Q50 demand
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
+        st.metric(
+            "First Quartile Forecast",
+            f"{q25:.0f}"
         )
-
 
     with kpi3:
-
-        st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">
-                    Lead-Time Demand
-                </div>
-
-                <div class="kpi-value">
-                    {lead_time_demand:.0f}
-                </div>
-
-                <div class="kpi-description">
-                    units over {lead_time} days
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
+        st.metric(
+            "Median Forecast",
+            f"{q50:.0f}"
         )
-
 
     with kpi4:
-
-        st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">
-                    Reorder Point
-                </div>
-
-                <div class="kpi-value">
-                    {reorder_point:.0f}
-                </div>
-
-                <div class="kpi-description">
-                    units
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
+        st.metric(
+            "First Quartile Forecast",
+            f"{q75:.0f}"
         )
 
+    with kpi5:
+        st.metric(
+            "Selected Model",
+            st.session_state.selected_model_name
+        )
 
     # ========================================================
     # DEMAND FORECAST
     # ========================================================
 
-    st.markdown(
-        '<div class="section-title">Demand Forecast</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        """
-        <div class="section-description">
-        Forecast distribution across different demand scenarios.
-        </div>
-        """,
-        unsafe_allow_html=True
+    st.subheader("Demand Forecast")
+    st.caption(
+        "Forecast distribution across different demand scenarios."
     )
 
 
@@ -756,6 +1185,10 @@ if st.session_state.forecast_generated:
     forecast_col1, forecast_col2 = st.columns([1, 2])
 
 
+    # --------------------------------------------------------
+    # QUANTILE TABLE
+    # --------------------------------------------------------
+
     with forecast_col1:
 
         st.dataframe(
@@ -770,6 +1203,10 @@ if st.session_state.forecast_generated:
         )
 
 
+    # --------------------------------------------------------
+    # QUANTILE CHART
+    # --------------------------------------------------------
+
     with forecast_col2:
 
         st.bar_chart(
@@ -782,23 +1219,17 @@ if st.session_state.forecast_generated:
     # INVENTORY DECISION
     # ========================================================
 
-    st.markdown(
-        '<div class="section-title">Inventory Decision</div>',
-        unsafe_allow_html=True
+    st.subheader("Inventory Decision")
+    st.caption(
+        "Determine whether the current inventory level requires replenishment."
     )
-
-    st.markdown(
-        """
-        <div class="section-description">
-        Determine whether the current inventory level requires replenishment.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
 
     inventory_col1, inventory_col2 = st.columns([1, 1])
 
+
+    # --------------------------------------------------------
+    # INVENTORY TABLE
+    # --------------------------------------------------------
 
     with inventory_col1:
 
@@ -806,19 +1237,10 @@ if st.session_state.forecast_generated:
 
             "Inventory Metric": [
                 "Current Inventory",
-                "Lead Time",
                 "Lead-Time Demand",
                 "Safety Stock",
                 "Reorder Point"
             ],
-
-            "Value": [
-                f"{current_inventory:.0f} units",
-                f"{lead_time} days",
-                f"{lead_time_demand:.0f} units",
-                f"{safety_stock:.0f} units",
-                f"{reorder_point:.0f} units"
-            ]
 
         })
 
@@ -830,39 +1252,8 @@ if st.session_state.forecast_generated:
         )
 
 
-    with inventory_col2:
-
-        # ----------------------------------------------------
-        # INVENTORY STATUS
-        # ----------------------------------------------------
-
-        if current_inventory <= reorder_point:
-
-            st.error(
-                "### ⚠️ Reorder Recommended\n\n"
-                f"Current inventory is **{current_inventory:.0f} units**, "
-                f"which is at or below the reorder point of "
-                f"**{reorder_point:.0f} units**."
-            )
-
-        else:
-
-            inventory_buffer = (
-                current_inventory - reorder_point
-            )
-
-            st.success(
-                "### ✅ Inventory Sufficient\n\n"
-                f"Current inventory is **{current_inventory:.0f} units**, "
-                f"which is above the reorder point of "
-                f"**{reorder_point:.0f} units**.\n\n"
-                f"Current inventory buffer: "
-                f"**{inventory_buffer:.0f} units**."
-            )
-
-
     # ========================================================
-    # REORDER POINT VISUALIZATION
+    # INVENTORY POSITION
     # ========================================================
 
     st.markdown(
@@ -870,19 +1261,14 @@ if st.session_state.forecast_generated:
         unsafe_allow_html=True
     )
 
+
     inventory_chart = pd.DataFrame({
 
         "Inventory Level": [
-            current_inventory,
-            reorder_point,
-            safety_stock
+            "Current Inventory",
+            "Reorder Point",
+            "Safety Stock"
         ],
-
-        "Units": [
-            current_inventory,
-            reorder_point,
-            safety_stock
-        ]
 
     })
 
@@ -903,31 +1289,6 @@ if st.session_state.forecast_generated:
     )
 
 
-    if current_inventory <= reorder_point:
-
-        recommendation_text = (
-            f"The forecast indicates a median demand of "
-            f"{q50:.0f} units. Considering a lead time of "
-            f"{lead_time} days and safety stock of "
-            f"{safety_stock:.0f} units, the calculated reorder "
-            f"point is {reorder_point:.0f} units. "
-            f"Since current inventory is {current_inventory:.0f} units, "
-            f"which is below the reorder threshold, replenishment "
-            f"is recommended."
-        )
-
-    else:
-
-        recommendation_text = (
-            f"The forecast indicates a median demand of "
-            f"{q50:.0f} units. The calculated reorder point is "
-            f"{reorder_point:.0f} units. Current inventory of "
-            f"{current_inventory:.0f} units remains above the "
-            f"reorder threshold, so immediate replenishment "
-            f"is not required."
-        )
-
-
     st.markdown(
         f"""
         <div class="recommendation">
@@ -936,11 +1297,8 @@ if st.session_state.forecast_generated:
                 📌 Inventory Recommendation
             </div>
 
-            <div class="recommendation-text">
-                {recommendation_text}
-            </div>
-
         </div>
+
         <br>
         """,
         unsafe_allow_html=True
@@ -948,7 +1306,7 @@ if st.session_state.forecast_generated:
 
 
     # ========================================================
-    # FORECAST DETAILS
+    # FORECAST INPUT DETAILS
     # ========================================================
 
     with st.expander("View Forecast Input Details"):
@@ -970,40 +1328,48 @@ else:
         """
         <div style="
             background: white;
-            border: 1px solid #e6e8eb;
-            border-radius: 12px;
-            padding: 45px;
+            border: 1px solid #dbeafe;
+            border-radius: 14px;
+            padding: 55px 30px;
             text-align: center;
             margin-top: 30px;
+            box-shadow: 0px 3px 10px rgba(15, 23, 42, 0.05);
         ">
 
-            <div style="font-size: 45px;">
+            <div style="
+                font-size: 46px;
+                margin-bottom: 8px;
+            ">
                 📊
             </div>
 
             <div style="
                 font-size: 22px;
                 font-weight: 650;
-                color: #1f2937;
-                margin-top: 10px;
+                color: #1e3a8a;
+                margin-top: 5px;
             ">
                 Ready to Forecast
             </div>
 
             <div style="
                 font-size: 14px;
-                color: #6b7280;
-                margin-top: 8px;
+                color: #64748b;
+                margin-top: 10px;
+                line-height: 1.6;
             ">
-                Configure the product, market and inventory
-                parameters using the sidebar, then click
-                <b>Run Demand Forecast</b>.
+                Configure the product, market and pricing
+                conditions using the sidebar.
+                <br>
+                Click <b>Run Demand Forecast</b> to generate
+                the demand prediction.
             </div>
 
         </div>
         """,
         unsafe_allow_html=True
     )
+
 
 # ============================================================
 # FOOTER
