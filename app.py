@@ -229,6 +229,29 @@ st.markdown(
         padding: 30px 0px 10px 0px;
     }
 
+    /* --------------------------------------------------------
+    SIDEBAR COLLAPSE / EXPAND BUTTON
+    -------------------------------------------------------- */
+
+    [data-testid="stSidebarCollapseButton"] button {
+        background-color: #2563eb !important;
+        color: #ffffff !important;
+        border: 2px solid #ffffff !important;
+        border-radius: 8px !important;
+        width: 38px !important;
+        height: 38px !important;
+        box-shadow: 0px 3px 10px rgba(0, 0, 0, 0.25) !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] button:hover {
+        background-color: #1d4ed8 !important;
+        color: #ffffff !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] button svg {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+    }
     </style>
     """,
     unsafe_allow_html=True
